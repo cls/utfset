@@ -99,10 +99,8 @@ addutf(UTFSet *set, const char *s)
 		 * a new block will be allocated for it.
 		 */
 		for (unsigned int n = clo6[c % 64]; c = *s++, n > 0; n--) {
-			if (tp->ptr == NULL) {
-				tp->ptr = calloc(1, sizeof(struct block));
-				if (tp->ptr == NULL)
-					return NULL; /* out of memory */
+			if (!tp->ptr && !(tp->ptr = calloc(1, sizeof(struct block)))) {
+				return NULL; /* out of memory */
 			}
 			tp = &tp->ptr->blk[c % 64];
 		}
@@ -223,9 +221,9 @@ prunes(const char *s)
 	UTFSet set = { 0 }; /* empty set */
 
 	while (*s != '\0') {
-		s = addutf(&set, s); /* add next rune to set */
-		if (s == NULL)
+		if (!(s = addutf(&set, s))) {
 			return -1; /* something went wrong */
+		}
 	}
 
 	foreach(&set, &prune); /* print all runes */
