@@ -169,19 +169,7 @@ foreach(const UTFSet *set, void (*fcn)(char32_t))
 void
 foreach1(union child t, unsigned int n, char32_t r, void (*fcn)(char32_t))
 {
-	if (n > 0) {
-		/*
-		 * This is not the final byte, so this node's children (if it
-		 * has any) are also nodes. Recurse over them for each possible
-		 * continuation value (10xxxxxx). We append the byte's value
-		 * onto that of the rune so far.
-		 */
-		if (t.ptr != NULL) {
-			for (unsigned char c = 0; c < 64; c++) {
-				foreach1(t.ptr->blk[c], n - 1, (r * 64) | c, fcn);
-			}
-		}
-	} else {
+	if (n == 0) {
 		/*
 		 * This is the final byte, so this node's children are booleans,
 		 * which means this is a bitmask. Call the function for each set
@@ -191,6 +179,16 @@ foreach1(union child t, unsigned int n, char32_t r, void (*fcn)(char32_t))
 			if ((t.bits & (UINT64_C(1) << c))) {
 				fcn((r * 64) | c);
 			}
+		}
+	} else if (t.ptr) {
+		/*
+		 * This is not the final byte, so this node's children (if it
+		 * has any) are also nodes. Recurse over them for each possible
+		 * continuation value (10xxxxxx). We append the byte's value
+		 * onto that of the rune so far.
+		 */
+		for (unsigned char c = 0; c < 64; c++) {
+			foreach1(t.ptr->blk[c], n - 1, (r * 64) | c, fcn);
 		}
 	}
 }
