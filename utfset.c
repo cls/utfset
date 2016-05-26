@@ -82,7 +82,7 @@ addutf(UTFSet *set, const char *s)
 	 * children to start with, and also how many continuation bytes follow.
 	 */
 	unsigned char c = *s++;
-	unsigned int n;
+	union child *tp;
 
 	/*
 	 * We write UTF-8 bytes in octal, because their structure is clearer in
@@ -91,13 +91,25 @@ addutf(UTFSet *set, const char *s)
 	 */
 	if (c >= 0300) {
 		/*
-		 * This is a leading byte, 11xxxxxx. The number of leading ones
-		 * in the lower 6 bits tells us how many continuation bytes are
-		 * expected. We also want to use the lower 6-bits as the first
-		 * index.
+		 * This is a leading byte, 11xxxxxx. Traversal starts at the
+		 * xxxxxx-th child of the root.
 		 */
-		c %= 64;     /* extract the lower bits */
-		n = clo6[c]; /* there are n+1 bytes left */
+		tp = &set->blk[c % 64];
+		/*
+		 * The number of leading ones in the lower 6 bits tells us how
+		 * many continuation bytes are expected. All but the final byte
+		 * (which is the bitmask index) is handled by traversing to the
+		 * corresponding child. If the child doesn't point anywhere yet,
+		 * a new block will be allocated for it.
+		 */
+		for (unsigned int n = clo6[c % 64]; c = *s++, n > 0; n--) {
+			if (tp->ptr == NULL) {
+				tp->ptr = calloc(1, sizeof *tp->ptr);
+				if (tp->ptr == NULL)
+					return NULL; /* out of memory */
+			}
+			tp = &tp->ptr->blk[c % 64];
+		}
 	} else if (c < 0200) {
 		/*
 		 * This is an ASCII byte, 0xxxxxxx. One such byte like this is
@@ -105,14 +117,8 @@ addutf(UTFSet *set, const char *s)
 		 * This means we can take the 7th bit as the first index, and
 		 * then stay on the same byte so we can later read the lower 6
 		 * bits as if they were a subsequent byte.
-		 *
-		 * Note that there is no wastage in treating an ASCII byte as
-		 * two UTF-8 bytes, as the root's first 32 children are just
-		 * bitmasks and so do not require any extra allocation.
 		 */
-		c /= 64; /* extract the higher bit */
-		n = 0;   /* there is one byte left, */
-		s--;     /* which is this one again */
+		tp = &set->blk[c / 64];
 	} else {
 		/*
 		 * This is a continuation byte, 10xxxxxx. This should not start
@@ -122,33 +128,11 @@ addutf(UTFSet *set, const char *s)
 	}
 
 	/*
-	 * Given a byte 11xxxxxx (or ASCII equivalent - see above), we start our
-	 * traversal of the tree at the xxxxxx-th child of the root node.
-	 */
-	union child *tp = &set->blk[c];
-
-	/*
-	 * There are n+1 bytes left. The first n will be handled as if a trie:
-	 * with byte 10xxxxxx we will traverse to this node's xxxxxx-th child.
-	 */
-	for (; n > 0; n--) {
-		/* If this child doesn't point anywhere yet, allocate a block. */
-		if (tp->ptr == NULL) {
-			tp->ptr = calloc(1, sizeof *tp->ptr);
-			if (tp->ptr == NULL)
-				return NULL; /* out of memory */
-		}
-		c = (unsigned char)*s++ % 64; /* extract the lower bits */
-		tp = &tp->ptr->blk[c];        /* traverse to child node */
-	}
-
-	/*
 	 * This is the final byte, so this node's children are boolean leaves.
 	 * This means we need to set a bit in the bitmask to indicate that the
 	 * rune corresponding to this byte sequence is an element of the set.
 	 */
-	c = (unsigned char)*s++ % 64; /* extract the lower bits */
-	tp->bits |= UINT64_C(1) << c; /* set bit in the bitmask */
+	tp->bits |= UINT64_C(1) << (c % 64);
 
 	return s;
 }
