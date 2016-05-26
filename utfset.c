@@ -71,18 +71,14 @@ const char clo6[] = {
 
 /*
  * addutf() adds the next rune in the UTF-8 string to the UTFSet, and returns a
- * pointer to the byte immediately after that rune.
+ * pointer to the byte following that rune. For clarity of code, we assume the
+ * string is valid UTF-8.
  */
 const char *
 addutf(UTFSet *set, const char *s)
 {
-	/*
-	 * For clarity of code, we will assume that the string is valid UTF-8.
-	 * First, we read the first byte. This will tell us which of the root's
-	 * children to start with, and also how many continuation bytes follow.
-	 */
-	unsigned char c = *s++;
 	union child *tp;
+	unsigned char c = *s++;
 
 	/*
 	 * We write UTF-8 bytes in octal, because their structure is clearer in
@@ -104,7 +100,7 @@ addutf(UTFSet *set, const char *s)
 		 */
 		for (unsigned int n = clo6[c % 64]; c = *s++, n > 0; n--) {
 			if (tp->ptr == NULL) {
-				tp->ptr = calloc(1, sizeof *tp->ptr);
+				tp->ptr = calloc(1, sizeof(struct block));
 				if (tp->ptr == NULL)
 					return NULL; /* out of memory */
 			}
@@ -184,7 +180,7 @@ foreach1(union child t, unsigned int n, char32_t r, void (*fcn)(char32_t))
 		 */
 		if (t.ptr != NULL) {
 			for (unsigned char c = 0; c < 64; c++) {
-				foreach1(t.ptr->blk[c], n - 1, (r * 64) + c, fcn);
+				foreach1(t.ptr->blk[c], n - 1, (r * 64) | c, fcn);
 			}
 		}
 	} else {
@@ -195,7 +191,7 @@ foreach1(union child t, unsigned int n, char32_t r, void (*fcn)(char32_t))
 		 */
 		for (unsigned char c = 0; c < 64; c++) {
 			if ((t.bits & (UINT64_C(1) << c))) {
-				fcn((r * 64) + c);
+				fcn((r * 64) | c);
 			}
 		}
 	}
