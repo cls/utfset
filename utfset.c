@@ -24,9 +24,11 @@
  * either a 64-bit pointer to an array of 64 child nodes or, in the case of a
  * leaf node, a 64-bit bitmask.
  */
-union node {
-	union node *subs; /* subs[64] */
-	uint64_t bits;
+struct block {
+	union child {
+		struct block *ptr;
+		uint64_t bits;
+	} blk[64];
 };
 
 /*
@@ -50,9 +52,7 @@ union node {
  * There is no accommodation for ASCII bytes, i.e. 0xxxxxxx, which are instead
  * dealt with in a special way, described later.
  */
-struct utfset {
-	union node root[64];
-};
+typedef struct block UTFSet;
 
 /*
  * This table is used to look up the number of leading ones in a 6-bit integer.
@@ -74,15 +74,15 @@ const char clo6[] = {
  * pointer to the byte immediately after that rune.
  */
 const char *
-addutf(struct utfset *set, const char *s)
+addutf(UTFSet *set, const char *s)
 {
 	/*
 	 * For clarity of code, we will assume that the string is valid UTF-8.
 	 * First, we read the first byte. This will tell us which of the root's
 	 * children to start with, and also how many continuation bytes follow.
 	 */
-	unsigned char c = (unsigned char)*s++;
-	int n;
+	unsigned char c = *s++;
+	unsigned int n;
 
 	/*
 	 * We write UTF-8 bytes in octal, because their structure is clearer in
@@ -125,21 +125,21 @@ addutf(struct utfset *set, const char *s)
 	 * Given a byte 11xxxxxx (or ASCII equivalent - see above), we start our
 	 * traversal of the tree at the xxxxxx-th child of the root node.
 	 */
-	union node *tp = &set->root[c];
+	union child *tp = &set->blk[c];
 
 	/*
 	 * There are n+1 bytes left. The first n will be handled as if a trie:
 	 * with byte 10xxxxxx we will traverse to this node's xxxxxx-th child.
 	 */
 	for (; n > 0; n--) {
-		/* If this node has no children yet, allocate and zero them. */
-		if (tp->subs == NULL) {
-			tp->subs = calloc(64, sizeof *tp->subs);
-			if (tp->subs == NULL)
+		/* If this child doesn't point anywhere yet, allocate a block. */
+		if (tp->ptr == NULL) {
+			tp->ptr = calloc(1, sizeof *tp->ptr);
+			if (tp->ptr == NULL)
 				return NULL; /* out of memory */
 		}
 		c = (unsigned char)*s++ % 64; /* extract the lower bits */
-		tp = &tp->subs[c];            /* traverse to child node */
+		tp = &tp->ptr->blk[c];        /* traverse to child node */
 	}
 
 	/*
@@ -153,7 +153,7 @@ addutf(struct utfset *set, const char *s)
 	return s;
 }
 
-static void foreach1(union node, int, char32_t, void (*)(char32_t));
+static void foreach1(union child, unsigned int, char32_t, void (*)(char32_t));
 
 /*
  * foreach() takes a pointer to a function that takes a rune, and calls that
@@ -165,7 +165,7 @@ static void foreach1(union node, int, char32_t, void (*)(char32_t));
  * UTF-8 sequences are illegal, this is not a problem if the input is sanitised.
  */
 void
-foreach(const struct utfset *set, void (*fcn)(char32_t))
+foreach(const UTFSet *set, void (*fcn)(char32_t))
 {
 	/*
 	 * For each possible leading byte (11xxxxxx), we determine the number of
@@ -174,10 +174,10 @@ foreach(const struct utfset *set, void (*fcn)(char32_t))
 	 * the leading ones.
 	 */
 	for (unsigned char c = 0; c < 64; c++) {
-		int n = clo6[c];            /* there are n+1 bytes left */
+		unsigned int n = clo6[c];   /* there are n+1 bytes left */
 		char32_t r = c % (64 >> n); /* unpack bits for the rune */
 
-		foreach1(set->root[c], n, r, fcn);
+		foreach1(set->blk[c], n, r, fcn);
 	}
 }
 
@@ -189,7 +189,7 @@ foreach(const struct utfset *set, void (*fcn)(char32_t))
  * from bytes so far, and the function to be called for each rune in the set.
  */
 void
-foreach1(union node t, int n, char32_t r, void (*fcn)(char32_t))
+foreach1(union child t, unsigned int n, char32_t r, void (*fcn)(char32_t))
 {
 	if (n > 0) {
 		/*
@@ -198,9 +198,9 @@ foreach1(union node t, int n, char32_t r, void (*fcn)(char32_t))
 		 * continuation value (10xxxxxx). We append the byte's value
 		 * onto that of the rune so far.
 		 */
-		if (t.subs) {
+		if (t.ptr != NULL) {
 			for (unsigned char c = 0; c < 64; c++) {
-				foreach1(t.subs[c], n - 1, (r * 64) + c, fcn);
+				foreach1(t.ptr->blk[c], n - 1, (r * 64) + c, fcn);
 			}
 		}
 	} else {
@@ -240,7 +240,7 @@ prune(char32_t r)
 int
 prunes(const char *s)
 {
-	struct utfset set = { 0 }; /* empty set */
+	UTFSet set = { 0 }; /* empty set */
 
 	while (*s != '\0') {
 		s = addutf(&set, s); /* add next rune to set */
